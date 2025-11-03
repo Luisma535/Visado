@@ -1,25 +1,26 @@
-# PyTorch CPU-only (versiones livianas)
-torch==2.9.0+cpu
-torchvision==0.24.0+cpu
-torchaudio==2.9.0+cpu
+# PyTorch CPU desde el índice oficial de CPU
+-f https://download.pytorch.org/whl/cpu
+torch
+torchvision
+torchaudio
 
 # Procesamiento de imágenes
-pillow>=10.0.0
-numpy>=1.21.0
-opencv-python-headless>=4.5.0
+pillow
+numpy
+opencv-python-headless
 
 # Web scraping y automatización
-selenium>=4.0.0
-webdriver-manager>=4.0.0
-beautifulsoup4>=4.10.0
-requests>=2.25.0
+selenium
+webdriver-manager
+beautifulsoup4
+requests
 
 # Utilidades y base de datos
-pyyaml>=6.0
-psycopg2-binary>=2.9.0
-tqdm>=4.62.0
-python-dotenv>=0.19.0
-schedule>=1.2.0
+pyyaml
+psycopg2-binary
+tqdm
+python-dotenv
+schedule
 
-# OCR (opcional - para fallback)
-pytesseract>=0.3.10
+# OCR (para fallback)
+pytesseract
