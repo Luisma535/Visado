@@ -1,0 +1,40 @@
+# === CONFIGURACIÓN DEL BOT VISADO ===
+
+# Intervalo en horas entre cada ciclo de monitoreo (0.5 = cada 30 minutos)
+intervalo_horas: 0.5
+
+# Cada cuántas horas se envía el resumen (por defecto 12)
+resumen_interval_hours: 1
+
+# === NOTIFICACIONES ===
+notificaciones:
+  email_destino: "edua56621636@gmail.com"
+  email_from: "Bot Visado <no-reply@botvisado.com>"
+
+# === CUENTAS A MONITOREAR ===
+cuentas:
+  - nombre: "Eduardo Pérez"
+    identificador: "ESP326CU6B42408511646445"
+    año_nacimiento: "2005"
+    email_notif: "edua56621636@gmail.com"
+
+  - nombre: "Lucía Soler"
+    identificador: "ESP326CUDB42108243467929"
+    año_nacimiento: "2006"
+    email_notif: "edua56621636@gmail.com"
+
+# === BASE DE DATOS (Railway) ===
+postgres:
+  enabled: true
+
+# === MODELO CRNN ===
+crnn:
+  model_path: "final_crnn_epoch28.pth"
+  mapping_path: "char_mapping.pkl"
+  device: cpu          # railway free plan sin GPU
+  conf_threshold: 0.50
+
+# === OTROS PARÁMETROS ===
+max_concurrency: 2
+max_reintentos: 10
+ocr_min_len: 4

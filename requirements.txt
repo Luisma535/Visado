@@ -1,0 +1,13 @@
+torch
+torchvision
+torchaudio
+pillow
+numpy
+opencv-python-headless
+requests
+pyyaml
+psycopg2-binary
+selenium
+beautifulsoup4
+tqdm
+python-dotenv
