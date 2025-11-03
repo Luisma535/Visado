@@ -1,13 +1,25 @@
-torch
-torchvision
-torchaudio
-pillow
-numpy
-opencv-python-headless
-requests
-pyyaml
-psycopg2-binary
-selenium
-beautifulsoup4
-tqdm
-python-dotenv
+# PyTorch CPU-only (versiones livianas)
+torch==2.9.0+cpu
+torchvision==0.24.0+cpu
+torchaudio==2.9.0+cpu
+
+# Procesamiento de imágenes
+pillow>=10.0.0
+numpy>=1.21.0
+opencv-python-headless>=4.5.0
+
+# Web scraping y automatización
+selenium>=4.0.0
+webdriver-manager>=4.0.0
+beautifulsoup4>=4.10.0
+requests>=2.25.0
+
+# Utilidades y base de datos
+pyyaml>=6.0
+psycopg2-binary>=2.9.0
+tqdm>=4.62.0
+python-dotenv>=0.19.0
+schedule>=1.2.0
+
+# OCR (opcional - para fallback)
+pytesseract>=0.3.10
