@@ -1,6 +1,7 @@
 # PyTorch CPU-only mínimo
-torch==2.9.0 --index-url https://download.pytorch.org/whl/cpu
-torchvision==0.24.0 --index-url https://download.pytorch.org/whl/cpu
+torch==2.9.0+cpu
+torchvision==0.24.0+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
 
 # Procesamiento de imágenes
 pillow>=10.0.0
@@ -22,3 +23,4 @@ schedule>=1.2.0
 
 # OCR fallback
 pytesseract>=0.3.10
+
