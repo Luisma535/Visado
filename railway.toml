@@ -1,0 +1,9 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "./Dockerfile"
+
+[deploy]
+startCommand = "python bot_visado.py"
+
+[build.env]
+NODE_VERSION = "18"
