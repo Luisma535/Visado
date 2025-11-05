@@ -4,28 +4,70 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
 import time
+import urllib.parse
 
 class DatabaseManager:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.conn = None
         self.connect()
-        self.init_tables()
+        if self.conn:
+            self.init_tables()
     
     def connect(self):
-        """Establecer conexión con PostgreSQL"""
-        try:
-            # Railway provee DATABASE_URL automáticamente
-            database_url = os.environ.get('DATABASE_URL')
-            if not database_url:
-                raise ValueError("DATABASE_URL no encontrada en variables de entorno")
-            
-            self.conn = psycopg2.connect(database_url, cursor_factory=RealDictCursor)
-            self.logger.info("✅ Conexión a PostgreSQL establecida")
-        except Exception as e:
-            self.logger.error(f"❌ Error conectando a PostgreSQL: {e}")
-            raise
+        """Establecer conexión con PostgreSQL en Railway"""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                # Railway provee DATABASE_URL automáticamente
+                database_url = os.environ.get('DATABASE_URL')
+                
+                if not database_url:
+                    self.logger.error("DATABASE_URL no encontrada en variables de entorno")
+                    # Intentar construir desde variables individuales
+                    database_url = self._build_database_url_from_env()
+                
+                if not database_url:
+                    raise ValueError("No se pudo obtener DATABASE_URL")
+                
+                # Parsear y asegurar formato correcto
+                if database_url.startswith('postgres://'):
+                    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+                
+                self.conn = psycopg2.connect(
+                    database_url, 
+                    cursor_factory=RealDictCursor,
+                    connect_timeout=10
+                )
+                self.logger.info("✅ Conexión a PostgreSQL establecida")
+                return
+                
+            except Exception as e:
+                self.logger.error(f"❌ Error conectando a PostgreSQL (intento {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    raise
     
+    def _build_database_url_from_env(self):
+        """Construir DATABASE_URL desde variables individuales"""
+        try:
+            db_user = os.environ.get('PGUSER')
+            db_password = os.environ.get('PGPASSWORD') 
+            db_host = os.environ.get('PGHOST', 'postgres.railway.internal')
+            db_port = os.environ.get('PGPORT', '5432')
+            db_name = os.environ.get('PGDATABASE')
+            
+            if all([db_user, db_password, db_host, db_name]):
+                return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+            return None
+        except Exception as e:
+            self.logger.error(f"Error construyendo DATABASE_URL: {e}")
+            return None
+
     def init_tables(self):
         """Crear tablas si no existen"""
         try:
