@@ -4,7 +4,7 @@
 intervalo_horas: 0.5
 
 # Cada cuántas horas se envía el resumen (por defecto 12)
-resumen_interval_hours: 1
+resumen_interval_hours: 12
 
 # === NOTIFICACIONES ===
 notificaciones:
@@ -38,4 +38,5 @@ crnn:
 max_concurrency: 2
 max_reintentos: 10
 ocr_min_len: 4
+
 
