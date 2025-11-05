@@ -8,7 +8,7 @@ pillow>=10.0.0
 numpy>=1.21.0
 opencv-python-headless>=4.5.0
 
-# Web scraping
+# Web scraping - ACTUALIZADO para Railway
 selenium>=4.0.0
 webdriver-manager>=4.0.0
 beautifulsoup4>=4.10.0
@@ -24,3 +24,6 @@ schedule>=1.2.0
 # OCR fallback
 pytesseract>=0.3.10
 
+# NUEVAS DEPENDENCIAS para Railway
+urllib3>=1.26.0
+chromedriver-autoinstaller>=0.6.0
