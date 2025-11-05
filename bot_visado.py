@@ -33,6 +33,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, StaleElementReferenceException
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import chromedriver_autoinstaller
 
 # Intentar importar DatabaseManager si existe
 try:
@@ -168,8 +171,8 @@ class BotVisado:
         self.executor = ThreadPoolExecutor(max_workers=self.MAX_CONCURRENCIA)
         self.MAX_REINTENTOS = int(self.config.get('max_reintentos', 12))
         # scheduling params
-        self.interval_hours = float(self.config.get('monitor_interval_hours', 0.5))  # por defecto 30 minutos
-        self.summary_hours = float(self.config.get('summary_hours', self.DEFAULT_SUMMARY_HOURS))
+        self.interval_hours = float(self.config.get('intervalo_horas', 0.5))  # por defecto 30 minutos
+        self.summary_hours = float(self.config.get('resumen_interval_hours', self.DEFAULT_SUMMARY_HOURS))
         self.resend_api_key = os.environ.get('RESEND_API_KEY')
         # Estado interno
         self.running = False
@@ -245,16 +248,54 @@ class BotVisado:
 
     # ------------------ Selenium / CAPTCHA ------------------
     def inicializar_selenium(self):
-        options = webdriver.ChromeOptions()
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        # Railway requiere chrome + chromedriver build; asumimos disponible
-        driver = webdriver.Chrome(options=options)
-        wait = WebDriverWait(driver, 20)
-        return driver, wait
+        """Configura Selenium para Railway"""
+        try:
+            options = webdriver.ChromeOptions()
+            options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-software-rasterizer")
+            
+            # Intentar usar chromedriver-autoinstaller primero
+            try:
+                chromedriver_autoinstaller.install()
+                driver = webdriver.Chrome(options=options)
+            except Exception as e:
+                self.logger.warning(f"Chromedriver autoinstall falló: {e}. Usando webdriver-manager...")
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=options)
+            
+            wait = WebDriverWait(driver, 20)
+            self.logger.info("✅ Selenium inicializado correctamente")
+            return driver, wait
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error crítico inicializando Selenium: {e}")
+            # Fallback: intentar con Browserless (servicio remoto)
+            return self._inicializar_selenium_fallback()
+
+    def _inicializar_selenium_fallback(self):
+        """Fallback usando servicio remoto Browserless"""
+        try:
+            options = webdriver.ChromeOptions()
+            options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            
+            # Usar Browserless.io (servicio gratuito limitado)
+            driver = webdriver.Remote(
+                command_executor='https://chrome.browserless.io/webdriver',
+                options=options
+            )
+            wait = WebDriverWait(driver, 20)
+            self.logger.info("✅ Selenium fallback (Browserless) inicializado")
+            return driver, wait
+        except Exception as e:
+            self.logger.error(f"❌ Fallback también falló: {e}")
+            raise
 
     def capturar_captcha(self, driver, wait, identificador=None):
         try:
