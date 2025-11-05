@@ -9,7 +9,7 @@ resumen_interval_hours: 1
 # === NOTIFICACIONES ===
 notificaciones:
   email_destino: "edua56621636@gmail.com"
-  email_from: "Bot Visado <no-reply@botvisado.com>"
+  email_from: "onboarding@resend.dev"
 
 # === CUENTAS A MONITOREAR ===
 cuentas:
@@ -38,3 +38,4 @@ crnn:
 max_concurrency: 2
 max_reintentos: 10
 ocr_min_len: 4
+
