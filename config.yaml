@@ -36,4 +36,3 @@ crnn:
 max_concurrency: 2
 max_reintentos: 10
 ocr_min_len: 4
-
