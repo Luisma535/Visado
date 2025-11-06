@@ -178,7 +178,10 @@ class BotVisado:
         self.running = False
         # Para rastrear primeras verificaciones
         self.primeras_verificaciones = self._cargar_primeras_verificaciones()
-        self.logger.info(f"Bot inicializado: {len(self.cuentas)} cuentas, concurrencia={self.MAX_CONCURRENCIA}, intervalo={self.interval_hours}h, resumen cada {self.summary_hours}h")
+        
+        horas_display = self.formatear_horas_para_display()
+        self.logger.info(f"Bot inicializado: {len(self.cuentas)} cuentas, concurrencia={self.MAX_CONCURRENCIA}")
+        self.logger.info(f"Horario servidor: {horas_display}")
 
     def _cargar_config(self, path):
         if not os.path.exists(path):
@@ -245,6 +248,37 @@ class BotVisado:
                 json.dump(list(self.primeras_verificaciones), f, ensure_ascii=False)
         except Exception as e:
             self.logger.warning(f"Error guardando primeras verificaciones: {e}")
+
+    def obtener_horas_actuales(self):
+        """Obtiene la hora actual en Cuba y España"""
+        try:
+            # Timezones
+            import pytz
+            tz_cuba = pytz.timezone('America/Havana')
+            tz_espana = pytz.timezone('Europe/Madrid')
+            
+            # Hora UTC actual
+            utc_now = datetime.utcnow().replace(tzinfo=pytz.utc)
+            
+            # Convertir a ambos timezones
+            hora_cuba = utc_now.astimezone(tz_cuba)
+            hora_espana = utc_now.astimezone(tz_espana)
+            
+            return hora_cuba, hora_espana
+        except Exception as e:
+            # Fallback si pytz no está disponible
+            self.logger.warning(f"Error obteniendo timezones: {e}")
+            now = datetime.now()
+            return now, now
+
+    def formatear_horas_para_display(self):
+        """Formatea las horas para mostrar en logs y emails"""
+        hora_cuba, hora_espana = self.obtener_horas_actuales()
+        
+        cuba_str = hora_cuba.strftime('%Y-%m-%d %H:%M:%S %Z')
+        espana_str = hora_espana.strftime('%Y-%m-%d %H:%M:%S %Z')
+        
+        return f"🇨🇺 Cuba: {cuba_str} | 🇪🇸 España: {espana_str}"
 
     # ------------------ Selenium / CAPTCHA ------------------
     def inicializar_selenium(self):
@@ -445,6 +479,8 @@ class BotVisado:
     def enviar_notificacion_primer_monitoreo(self, nombre, identificador, estado):
         """Envía notificación cuando se monitorea una cuenta por primera vez"""
         asunto = f"✅ Monitoreo iniciado: {nombre} ({identificador})"
+        horas_display = self.formatear_horas_para_display()
+        
         cuerpo = f"""
         <h3>¡Monitoreo iniciado exitosamente!</h3>
         <p>Se ha comenzado a monitorear el trámite de visado para:</p>
@@ -453,8 +489,8 @@ class BotVisado:
             <li><strong>Identificador:</strong> {identificador}</li>
             <li><strong>Estado inicial:</strong> {estado}</li>
         </ul>
+        <p><strong>Horario de verificación:</strong><br>{horas_display.replace(' | ', '<br>')}</p>
         <p>El bot verificará periódicamente el estado y te notificará de cualquier cambio.</p>
-        <p><em>Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}</em></p>
         """
         return self.enviar_notificacion(asunto, cuerpo)
 
@@ -471,7 +507,11 @@ class BotVisado:
         .stats { background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px; margin: 16px 0; }
         .stat-item { display: inline-block; margin-right: 25px; }
         .stat-value { font-size: 20px; font-weight: bold; }
+        .time-info { background: rgba(255,255,255,0.03); padding: 12px; border-radius: 6px; margin: 10px 0; font-size: 13px; color: #9fb3d6; }
         """
+        
+        # Obtener horas actuales
+        horas_display = self.formatear_horas_para_display()
         
         stats_html = f"""
         <div class="stats">
@@ -498,12 +538,18 @@ class BotVisado:
         <div class="card">
           <h2>📊 Estado Actual del Monitoreo</h2>
           <div style="color:#9fb3d6; font-size:14px; margin-bottom:10px;">{periodo_texto}</div>
+          <div class="time-info">
+            <strong>🕐 Horario del reporte:</strong><br>
+            {horas_display.replace(' | ', '<br>')}
+          </div>
           {stats_html}
           <table role="presentation">
             <thead><tr><th>Nombre</th><th>Identificador</th><th>Estado Actual</th><th>Resultado</th></tr></thead>
             <tbody>{rows_html}</tbody>
           </table>
-          <div style="margin-top:16px; font-size:12px; color:#93b0d6;">Enviado por Bot Visado • {time.strftime('%Y-%m-%d %H:%M:%S')}</div>
+          <div style="margin-top:16px; font-size:12px; color:#93b0d6;">
+            Enviado por Bot Visado • {horas_display}
+          </div>
         </div></body></html>"""
         return html
 
@@ -696,7 +742,8 @@ class BotVisado:
                 guardado = self.guardar_estado(nombre, identificador, estado_actual)
                 # registrar verificación en DB/historial ya hecho en guardar_estado
                 asunto = f"🚨 Cambio de estado detectado: {nombre} ({identificador})"
-                cuerpo = f"Se detectó un cambio en el trámite para {nombre} ({identificador}).\n\nEstado anterior: {estado_anterior}\nEstado actual: {estado_actual}\n\nTimestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                horas_display = self.formatear_horas_para_display()
+                cuerpo = f"Se detectó un cambio en el trámite para {nombre} ({identificador}).\n\nEstado anterior: {estado_anterior}\nEstado actual: {estado_actual}\n\n🕐 Horario de detección:\n{horas_display}"
                 self.enviar_notificacion(asunto, f"<pre>{cuerpo}</pre>", destinatario=None, es_html=True)
                 self.logger.info(f"[{nombre} ({identificador})] Cambio detectado y notificado.")
             else:
@@ -757,4 +804,5 @@ class BotVisado:
 if __name__ == "__main__":
     bot = BotVisado("config.yaml")
     bot.iniciar()
+
 
