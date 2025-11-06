@@ -16,12 +16,10 @@ cuentas:
   - nombre: "Eduardo Pérez"
     identificador: "ESP326CU6B42408511646445"
     año_nacimiento: "2005"
-    email_notif: "edua56621636@gmail.com"
 
   - nombre: "Lucía Soler"
     identificador: "ESP326CUDB42108243467929"
     año_nacimiento: "2006"
-    email_notif: "edua56621636@gmail.com"
 
 # === BASE DE DATOS (Railway) ===
 postgres:
@@ -38,5 +36,4 @@ crnn:
 max_concurrency: 2
 max_reintentos: 10
 ocr_min_len: 4
-
 
