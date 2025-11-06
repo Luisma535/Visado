@@ -280,6 +280,53 @@ class BotVisado:
         
         return f"🇨🇺 Cuba: {cuba_str} | 🇪🇸 España: {espana_str}"
 
+    def procesar_info_tiempo(self, hora_str):
+        """Procesa la información de tiempo para mostrar horas Cuba/España y tiempo transcurrido"""
+        if not hora_str or hora_str == "No disponible" or hora_str == "Nunca":
+            return "No disponible", "No disponible", "-"
+        
+        try:
+            # Convertir string a datetime
+            if isinstance(hora_str, str):
+                hora_utc = datetime.strptime(hora_str, '%Y-%m-%d %H:%M:%S')
+            else:
+                hora_utc = hora_str
+            
+            # Convertir a hora Cuba y España
+            import pytz
+            tz_cuba = pytz.timezone('America/Havana')
+            tz_espana = pytz.timezone('Europe/Madrid')
+            
+            hora_cuba = hora_utc.replace(tzinfo=pytz.utc).astimezone(tz_cuba)
+            hora_espana = hora_utc.replace(tzinfo=pytz.utc).astimezone(tz_espana)
+            
+            # Formatear horas exactas
+            hora_cuba_str = hora_cuba.strftime('%H:%M:%S')
+            hora_espana_str = hora_espana.strftime('%H:%M:%S')
+            
+            # Calcular tiempo transcurrido
+            now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
+            diferencia = now_utc - hora_utc.replace(tzinfo=pytz.utc)
+            
+            minutos = int(diferencia.total_seconds() / 60)
+            horas = int(minutos / 60)
+            
+            if minutos < 1:
+                hace_tiempo = "Ahora"
+            elif minutos < 60:
+                hace_tiempo = f"{minutos}m"
+            elif horas < 24:
+                hace_tiempo = f"{horas}h {minutos%60}m"
+            else:
+                dias = horas // 24
+                hace_tiempo = f"{dias}d {horas%24}h"
+            
+            return f"{hora_cuba_str}", f"{hora_espana_str}", hace_tiempo
+                
+        except Exception as e:
+            self.logger.warning(f"Error procesando tiempo '{hora_str}': {e}")
+            return "Error", "Error", "Error"
+
     # ------------------ Selenium / CAPTCHA ------------------
     def inicializar_selenium(self):
         """Configura Selenium para Railway"""
@@ -499,9 +546,9 @@ class BotVisado:
         css = """
         body { font-family: Arial, sans-serif; background:#0b1220; color:#f0f6ff; padding:18px; }
         .card { background:#071022; border-radius:10px; padding:14px; box-shadow:0 6px 18px rgba(0,0,0,0.6); }
-        table { width:100%; border-collapse:collapse; margin-top:10px; }
-        th, td { padding:12px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.06); font-size:14px; }
-        th { color:#9fb3d6; background:rgba(255,255,255,0.05); }
+        table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
+        th, td { padding:8px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.06); }
+        th { color:#9fb3d6; background:rgba(255,255,255,0.05); font-size:11px; }
         .ok { color:#a7f3d0; font-weight:600; }
         .err { color:#fecaca; font-weight:600; }
         .stats { background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px; margin: 16px 0; }
@@ -544,17 +591,26 @@ class BotVisado:
           </div>
           {stats_html}
           <table role="presentation">
-            <thead><tr><th>Nombre</th><th>Identificador</th><th>Estado Actual</th><th>Resultado</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Identificador</th>
+                <th>Estado Actual</th>
+                <th>Hora Verificación</th>
+                <th>Hace</th>
+                <th>Resultado</th>
+              </tr>
+            </thead>
             <tbody>{rows_html}</tbody>
           </table>
-          <div style="margin-top:16px; font-size:12px; color:#93b0d6;">
+          <div style="margin-top:16px; font-size:11px; color:#93b0d6;">
             Enviado por Bot Visado • {horas_display}
           </div>
         </div></body></html>"""
         return html
 
     def enviar_resumen_12h(self):
-        """Envía resumen con el estado actual de cada cuenta (última verificación)"""
+        """Envía resumen con el estado actual de cada cuenta, hora exacta y tiempo transcurrido"""
         try:
             now = datetime.now()
             rows = []
@@ -567,14 +623,16 @@ class BotVisado:
                 
                 # Buscar la última verificación en el historial
                 ultimo_estado = None
+                ultima_hora_str = "No disponible"
                 exitoso = False
                 
                 if self.db:
                     # Buscar en la base de datos
-                    historial = self.db.cargar_historial(identificador, limite=1)  # Solo el más reciente
+                    historial = self.db.cargar_historial(identificador, limite=1)
                     if historial:
                         ultimo_registro = historial[0]
                         ultimo_estado = ultimo_registro.get('estado')
+                        ultima_hora_str = ultimo_registro.get('fecha_hora', 'No disponible')
                         exitoso = ultimo_registro.get('exitoso', False)
                 else:
                     # Buscar en archivo local
@@ -588,6 +646,7 @@ class BotVisado:
                                     obj = json.loads(linea.strip())
                                     if obj.get('identificador') == identificador:
                                         ultimo_estado = obj.get('estado')
+                                        ultima_hora_str = obj.get('fecha_hora', 'No disponible')
                                         exitoso = obj.get('exitoso', False)
                                         break
                                 except Exception:
@@ -608,11 +667,27 @@ class BotVisado:
                 else:
                     resultado = "<span class='err'>❌ SIN DATOS</span>"
                     estado_display = "No se pudo verificar"
+                    ultima_hora_str = "Nunca"
                     estadisticas['errores'] += 1
                     estadisticas['total'] += 1
                 
+                # Procesar información de tiempo
+                hora_cuba, hora_espana, hace_tiempo = self.procesar_info_tiempo(ultima_hora_str)
+                
                 # Agregar fila a la tabla
-                rows.append(f"<tr><td>{nombre}</td><td>{identificador}</td><td>{estado_display}</td><td>{resultado}</td></tr>")
+                rows.append(f"""
+                <tr>
+                    <td>{nombre}</td>
+                    <td>{identificador}</td>
+                    <td>{estado_display}</td>
+                    <td style="color:#9fb3d6; font-size:11px;">
+                        🇨🇺 {hora_cuba}<br>
+                        🇪🇸 {hora_espana}
+                    </td>
+                    <td style="color:#93c5fd; font-size:12px; font-weight:600;">{hace_tiempo}</td>
+                    <td>{resultado}</td>
+                </tr>
+                """)
             
             # Calcular tasa de éxito
             if estadisticas['total'] > 0:
@@ -620,7 +695,7 @@ class BotVisado:
             
             periodo_texto = f"Estado actual de las cuentas - {now.strftime('%Y-%m-%d %H:%M:%S')}"
             html = self.generar_html_resumen(
-                ''.join(rows) or "<tr><td colspan='4' style='color:#9fb3d6;padding:12px;'>No hay datos disponibles.</td></tr>", 
+                ''.join(rows) or "<tr><td colspan='6' style='color:#9fb3d6;padding:12px;'>No hay datos disponibles.</td></tr>", 
                 periodo_texto, 
                 estadisticas
             )
