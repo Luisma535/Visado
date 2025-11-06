@@ -335,7 +335,6 @@ class BotVisado:
                     self.logger.info(f"CRNN: pred='{pred}' len={len(pred)} conf={conf:.3f} -> fallback a Tesseract")
             except Exception as e:
                 self.logger.error(f"Error CRNN: {e}")
-
         # Fallback Tesseract
         try:
             import pytesseract
@@ -350,7 +349,6 @@ class BotVisado:
                 return cleaned, 'tesseract', 0.0
         except Exception as e:
             self.logger.warning(f"Tesseract falló: {e}")
-
         return "", 'none', 0.0
 
     # ------------------ DB helpers (con fallback local) ------------------
@@ -404,6 +402,9 @@ class BotVisado:
 
     # ------------------ Notificaciones (Resend) ------------------
     def enviar_notificacion(self, asunto, cuerpo_html, destinatario=None, es_html=True):
+        # Pequeño delay para evitar rate limiting
+        time.sleep(0.5)
+        
         # destinatario: si None, usar config.notifications.email_destino
         email_dest = destinatario or self.config.get('notificaciones', {}).get('email_destino')
         if not email_dest:
@@ -457,37 +458,37 @@ class BotVisado:
         """
         return self.enviar_notificacion(asunto, cuerpo)
 
-    # ------------------ Resumen HTML ------------------
+    # ------------------ Resumen HTML (ACTUALIZADO) ------------------
     def generar_html_resumen(self, rows_html, periodo_texto, estadisticas):
         css = """
         body { font-family: Arial, sans-serif; background:#0b1220; color:#f0f6ff; padding:18px; }
         .card { background:#071022; border-radius:10px; padding:14px; box-shadow:0 6px 18px rgba(0,0,0,0.6); }
         table { width:100%; border-collapse:collapse; margin-top:10px; }
-        th, td { padding:8px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.06); font-size:13px; }
-        th { color:#9fb3d6; }
-        .ok { color:#a7f3d0; font-weight:600 }
-        .err { color:#fecaca; font-weight:600 }
-        .stats { background: rgba(255,255,255,0.05); padding: 12px; border-radius: 6px; margin: 12px 0; }
-        .stat-item { display: inline-block; margin-right: 20px; }
-        .stat-value { font-size: 18px; font-weight: bold; }
+        th, td { padding:12px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.06); font-size:14px; }
+        th { color:#9fb3d6; background:rgba(255,255,255,0.05); }
+        .ok { color:#a7f3d0; font-weight:600; }
+        .err { color:#fecaca; font-weight:600; }
+        .stats { background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px; margin: 16px 0; }
+        .stat-item { display: inline-block; margin-right: 25px; }
+        .stat-value { font-size: 20px; font-weight: bold; }
         """
         
         stats_html = f"""
         <div class="stats">
             <div class="stat-item">
-                <div>Monitoreos exitosos</div>
+                <div style="color:#9fb3d6; font-size:14px;">Cuentas activas</div>
+                <div class="stat-value" style="color:#a7f3d0;">{estadisticas['total']}</div>
+            </div>
+            <div class="stat-item">
+                <div style="color:#9fb3d6; font-size:14px;">Verificadas exitosamente</div>
                 <div class="stat-value" style="color:#a7f3d0;">{estadisticas['exitosos']}</div>
             </div>
             <div class="stat-item">
-                <div>Errores</div>
+                <div style="color:#9fb3d6; font-size:14px;">Con errores</div>
                 <div class="stat-value" style="color:#fecaca;">{estadisticas['errores']}</div>
             </div>
             <div class="stat-item">
-                <div>Total monitoreos</div>
-                <div class="stat-value" style="color:#9fb3d6;">{estadisticas['total']}</div>
-            </div>
-            <div class="stat-item">
-                <div>Tasa de éxito</div>
+                <div style="color:#9fb3d6; font-size:14px;">Tasa de éxito</div>
                 <div class="stat-value" style="color:#93c5fd;">{estadisticas['tasa_exito']}%</div>
             </div>
         </div>
@@ -495,79 +496,93 @@ class BotVisado:
         
         html = f"""<html><head><meta charset="utf-8"><style>{css}</style></head><body>
         <div class="card">
-          <h2>📊 Resumen de monitoreo</h2>
-          <div style="color:#9fb3d6; font-size:13px;">{periodo_texto}</div>
+          <h2>📊 Estado Actual del Monitoreo</h2>
+          <div style="color:#9fb3d6; font-size:14px; margin-bottom:10px;">{periodo_texto}</div>
           {stats_html}
           <table role="presentation">
-            <thead><tr><th>Hora</th><th>Cuenta</th><th>Estado</th><th>Resultado</th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Identificador</th><th>Estado Actual</th><th>Resultado</th></tr></thead>
             <tbody>{rows_html}</tbody>
           </table>
-          <div style="margin-top:12px; font-size:12px; color:#93b0d6;">Enviado por Bot Visado • {time.strftime('%Y-%m-%d %H:%M:%S')}</div>
+          <div style="margin-top:16px; font-size:12px; color:#93b0d6;">Enviado por Bot Visado • {time.strftime('%Y-%m-%d %H:%M:%S')}</div>
         </div></body></html>"""
         return html
 
     def enviar_resumen_12h(self):
-        # Construir resumen desde DB o logs locales
+        """Envía resumen con el estado actual de cada cuenta (última verificación)"""
         try:
             now = datetime.now()
-            cutoff = now - timedelta(hours=self.summary_hours)
             rows = []
             estadisticas = {"exitosos": 0, "errores": 0, "total": 0, "tasa_exito": 0}
             
-            if self.db:
-                # cargar historial desde db para cada cuenta
-                for c in self.cuentas:
-                    ident = c.get('identificador')
-                    nombre = c.get('nombre', 'Sin nombre')
-                    hist = self.db.cargar_historial(ident, limite=1000)
-                    for e in hist:
-                        try:
-                            fh = e.get('fecha_hora')
-                            dt = datetime.strptime(fh, '%Y-%m-%d %H:%M:%S')
-                            if dt >= cutoff:
-                                resultado = "<span class='ok'>OK</span>" if e.get('exitoso') else "<span class='err'>ERROR</span>"
-                                rows.append(f"<tr><td>{fh}</td><td>{nombre} ({ident})</td><td>{e.get('estado')}</td><td>{resultado}</td></tr>")
-                                estadisticas['total'] += 1
-                                if e.get('exitoso'):
-                                    estadisticas['exitosos'] += 1
-                                else:
-                                    estadisticas['errores'] += 1
-                        except Exception:
-                            continue
-            else:
-                # leer historial local
-                hist_path = os.path.join("estado_local", "historial.log")
-                if os.path.exists(hist_path):
-                    with open(hist_path, "r", encoding="utf-8") as f:
-                        for line in reversed(f.readlines()):
-                            try:
-                                obj = json.loads(line.strip())
-                                dt = datetime.strptime(obj['fecha_hora'], '%Y-%m-%d %H:%M:%S')
-                                if dt >= cutoff:
-                                    nombre = obj.get('nombre', 'Sin nombre')
-                                    resultado = "<span class='ok'>OK</span>" if obj.get('exitoso') else "<span class='err'>ERROR</span>"
-                                    rows.append(f"<tr><td>{obj['fecha_hora']}</td><td>{nombre} ({obj['identificador']})</td><td>{obj['estado']}</td><td>{resultado}</td></tr>")
-                                    estadisticas['total'] += 1
-                                    if obj.get('exitoso'):
-                                        estadisticas['exitosos'] += 1
-                                    else:
-                                        estadisticas['errores'] += 1
-                            except Exception:
-                                continue
-
+            # Obtener el estado actual de cada cuenta
+            for cuenta in self.cuentas:
+                nombre = cuenta.get('nombre', 'Sin nombre')
+                identificador = cuenta.get('identificador')
+                
+                # Buscar la última verificación en el historial
+                ultimo_estado = None
+                exitoso = False
+                
+                if self.db:
+                    # Buscar en la base de datos
+                    historial = self.db.cargar_historial(identificador, limite=1)  # Solo el más reciente
+                    if historial:
+                        ultimo_registro = historial[0]
+                        ultimo_estado = ultimo_registro.get('estado')
+                        exitoso = ultimo_registro.get('exitoso', False)
+                else:
+                    # Buscar en archivo local
+                    hist_path = os.path.join("estado_local", "historial.log")
+                    if os.path.exists(hist_path):
+                        with open(hist_path, "r", encoding="utf-8") as f:
+                            lineas = f.readlines()
+                            # Buscar la última entrada para esta cuenta
+                            for linea in reversed(lineas):
+                                try:
+                                    obj = json.loads(linea.strip())
+                                    if obj.get('identificador') == identificador:
+                                        ultimo_estado = obj.get('estado')
+                                        exitoso = obj.get('exitoso', False)
+                                        break
+                                except Exception:
+                                    continue
+                
+                # Determinar resultado y estilo
+                if ultimo_estado:
+                    if exitoso:
+                        resultado = "<span class='ok'>✅ ÉXITO</span>"
+                        estado_display = ultimo_estado
+                        estadisticas['exitosos'] += 1
+                    else:
+                        resultado = "<span class='err'>❌ ERROR</span>"
+                        estado_display = "Error en verificación"
+                        estadisticas['errores'] += 1
+                    
+                    estadisticas['total'] += 1
+                else:
+                    resultado = "<span class='err'>❌ SIN DATOS</span>"
+                    estado_display = "No se pudo verificar"
+                    estadisticas['errores'] += 1
+                    estadisticas['total'] += 1
+                
+                # Agregar fila a la tabla
+                rows.append(f"<tr><td>{nombre}</td><td>{identificador}</td><td>{estado_display}</td><td>{resultado}</td></tr>")
+            
             # Calcular tasa de éxito
             if estadisticas['total'] > 0:
                 estadisticas['tasa_exito'] = round((estadisticas['exitosos'] / estadisticas['total']) * 100, 1)
             
-            periodo_texto = f"Resumen desde {cutoff.strftime('%Y-%m-%d %H:%M:%S')} hasta {now.strftime('%Y-%m-%d %H:%M:%S')}"
+            periodo_texto = f"Estado actual de las cuentas - {now.strftime('%Y-%m-%d %H:%M:%S')}"
             html = self.generar_html_resumen(
-                ''.join(rows) or "<tr><td colspan='4' style='color:#9fb3d6;padding:12px;'>No hubo actividad en el periodo.</td></tr>", 
+                ''.join(rows) or "<tr><td colspan='4' style='color:#9fb3d6;padding:12px;'>No hay datos disponibles.</td></tr>", 
                 periodo_texto, 
                 estadisticas
             )
-            asunto = f"📊 Resumen de Monitoreo - Últimas {int(self.summary_hours)}h (Éxito: {estadisticas['tasa_exito']}%)"
+            
+            asunto = f"📊 Estado Actual - {estadisticas['exitosos']}/{estadisticas['total']} Exitosos ({estadisticas['tasa_exito']}%)"
             self.enviar_notificacion(asunto, html, destinatario=self.config.get('notificaciones', {}).get('email_destino'))
-            self.logger.info(f"Resumen enviado. Estadísticas: {estadisticas['exitosos']} exitosos, {estadisticas['errores']} errores, {estadisticas['tasa_exito']}% tasa de éxito")
+            self.logger.info(f"Resumen enviado. Estado actual: {estadisticas['exitosos']} exitosos, {estadisticas['errores']} errores")
+            
         except Exception as e:
             self.logger.error(f"Error generando/enviando resumen: {e}")
 
@@ -682,7 +697,7 @@ class BotVisado:
                 # registrar verificación en DB/historial ya hecho en guardar_estado
                 asunto = f"🚨 Cambio de estado detectado: {nombre} ({identificador})"
                 cuerpo = f"Se detectó un cambio en el trámite para {nombre} ({identificador}).\n\nEstado anterior: {estado_anterior}\nEstado actual: {estado_actual}\n\nTimestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}"
-                self.enviar_notificacion(asunto, f"<pre>{cuerpo}</pre>", destinatario=cuenta.get('email_notif') or None, es_html=True)
+                self.enviar_notificacion(asunto, f"<pre>{cuerpo}</pre>", destinatario=None, es_html=True)
                 self.logger.info(f"[{nombre} ({identificador})] Cambio detectado y notificado.")
             else:
                 # si no hubo cambio igual registramos verificación (si DB lo requiere)
@@ -742,3 +757,4 @@ class BotVisado:
 if __name__ == "__main__":
     bot = BotVisado("config.yaml")
     bot.iniciar()
+
