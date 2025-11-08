@@ -3,7 +3,7 @@
 Bot Visado (CRNN integrado) - Monitor 24/7 con notificaciones y resúmenes en español
 - Ejecuta monitoreos periódicos (configurable)
 - Envía correo inmediato al detectar cambio de estado
-- Envía resumen cada 12 horas (HTML) con historial de verificaciones
+- Envía resumen cada 12 horas (HTML) con historial detallado de verificaciones
 - Logs en español
 - Usa PostgreSQL (Railway) si está habilitado en config.yaml
 - Usa Resend (API) para envío de correos (RESEND_API_KEY en ENV)
@@ -361,6 +361,25 @@ class BotVisado:
         self.primeras_verificaciones.add(identificador)
         self._guardar_primeras_verificaciones()
 
+    # ------------------ Conversión de horas ------------------
+    def _convertir_hora_cuba(self, dt):
+        """Convierte datetime a hora de Cuba (CST = UTC-5)"""
+        try:
+            # Cuba está en UTC-5 (CST - Cuba Standard Time)
+            hora_cuba = dt - timedelta(hours=5)
+            return hora_cuba.strftime('%Y-%m-%d %H:%M:%S CST')
+        except:
+            return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+    def _convertir_hora_espana(self, dt):
+        """Convierte datetime a hora de España (CET = UTC+1)"""
+        try:
+            # España está en UTC+1 (CET - Central European Time)
+            hora_espana = dt + timedelta(hours=1)
+            return hora_espana.strftime('%Y-%m-%d %H:%M:%S CET')
+        except:
+            return dt.strftime('%Y-%m-%d %H:%M:%S')
+
     # ------------------ Notificaciones (Resend) ------------------
     def enviar_notificacion(self, asunto, cuerpo_html, destinatario=None, es_html=True):
         # destinatario: si None, usar config.notifications.email_destino
@@ -417,68 +436,89 @@ class BotVisado:
         return self.enviar_notificacion(asunto, cuerpo)
 
     # ------------------ Resumen HTML ------------------
-    def generar_html_resumen(self, rows_html, periodo_texto, estadisticas):
+    def generar_html_resumen_detallado(self, rows_html, periodo_texto, total, exitosos, errores, tasa_exito, total_cuentas):
         css = """
         body { font-family: Arial, sans-serif; background:#0b1220; color:#f0f6ff; padding:18px; }
         .card { background:#071022; border-radius:10px; padding:14px; box-shadow:0 6px 18px rgba(0,0,0,0.6); }
         table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
         th, td { padding:8px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.06); }
         th { color:#9fb3d6; background: rgba(255,255,255,0.05); }
-        .ok { color:#a7f3d0; font-weight:600 }
-        .err { color:#fecaca; font-weight:600 }
         .stats { background: rgba(255,255,255,0.05); padding: 12px; border-radius: 6px; margin: 12px 0; }
         .stat-item { display: inline-block; margin-right: 20px; }
         .stat-value { font-size: 18px; font-weight: bold; }
         .periodo { color: #9fb3d6; font-size: 13px; margin-bottom: 10px; }
+        .total { color: #93c5fd; }
+        .exitosas { color: #a7f3d0; }
+        .errores { color: #fecaca; }
+        .tasa { color: #fbbf24; }
+        .cuentas { color: #c4b5fd; }
+        .success { color: #a7f3d0; font-weight: bold; }
+        .error { color: #fecaca; font-weight: bold; }
         """
         
         stats_html = f"""
         <div class="stats">
             <div class="stat-item">
+                <div>Total cuentas</div>
+                <div class="stat-value cuentas">{total_cuentas}</div>
+            </div>
+            <div class="stat-item">
                 <div>Total verificaciones</div>
-                <div class="stat-value" style="color:#93c5fd;">{estadisticas['total']}</div>
+                <div class="stat-value total">{total}</div>
             </div>
             <div class="stat-item">
                 <div>Exitosas</div>
-                <div class="stat-value" style="color:#a7f3d0;">{estadisticas['exitosos']}</div>
+                <div class="stat-value exitosas">{exitosos}</div>
             </div>
             <div class="stat-item">
                 <div>Con errores</div>
-                <div class="stat-value" style="color:#fecaca;">{estadisticas['errores']}</div>
+                <div class="stat-value errores">{errores}</div>
             </div>
             <div class="stat-item">
                 <div>Tasa de éxito</div>
-                <div class="stat-value" style="color:#fbbf24;">{estadisticas['tasa_exito']}%</div>
+                <div class="stat-value tasa">{tasa_exito}%</div>
             </div>
         </div>
         """
         
         html = f"""<html><head><meta charset="utf-8"><style>{css}</style></head><body>
         <div class="card">
-          <h2>📊 Historial de Verificaciones</h2>
+          <h2>📊 Resumen Detallado de Verificaciones</h2>
           <div class="periodo">{periodo_texto}</div>
-          {stats_html if estadisticas['total'] > 0 else ''}
+          {stats_html if total > 0 else ''}
+          <h3>Detalle de cada verificación:</h3>
           <table role="presentation">
-            <thead><tr><th>Fecha/Hora</th><th>Cuenta</th><th>Estado Obtenido</th><th>Resultado</th></tr></thead>
-            <tbody>{rows_html}</tbody>
+            <thead>
+                <tr>
+                    <th>Hora (Cuba / España)</th>
+                    <th>Cuenta</th>
+                    <th>Estado Resultante</th>
+                    <th>Resultado</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html if rows_html else '<tr><td colspan="4" style="color:#9fb3d6;padding:12px;text-align:center;">No hubo verificaciones en el periodo.</td></tr>'}
+            </tbody>
           </table>
           <div style="margin-top:12px; font-size:11px; color:#93b0d6;">
+            Configuración: Intervalo de monitoreo: {self.interval_hours}h • {total_cuentas} cuentas activas<br>
             Enviado por Bot Visado • {time.strftime('%Y-%m-%d %H:%M:%S')}
           </div>
         </div></body></html>"""
         return html
 
     def enviar_resumen_12h(self):
-        # Construir resumen desde DB o logs locales - MOSTRAR TODAS LAS VERIFICACIONES
+        # Resumen detallado: TODAS las verificaciones individuales
         try:
             now = datetime.now()
             cutoff = now - timedelta(hours=self.summary_hours)
-            rows = []
-            estadisticas = {"exitosos": 0, "errores": 0, "total": 0, "tasa_exito": 0}
+            todas_verificaciones = []
+            total_verificaciones = 0
+            exitosos = 0
+            errores = 0
             
             if self.db:
-                # cargar TODAS las verificaciones del periodo para todas las cuentas
-                todas_verificaciones = []
+                # Obtener TODAS las verificaciones del periodo
                 for c in self.cuentas:
                     ident = c.get('identificador')
                     nombre = c.get('nombre', 'Sin nombre')
@@ -488,33 +528,29 @@ class BotVisado:
                             fh = e.get('fecha_hora')
                             dt = datetime.strptime(fh, '%Y-%m-%d %H:%M:%S')
                             if dt >= cutoff:
+                                # Convertir hora a Cuba y España
+                                hora_cuba = self._convertir_hora_cuba(dt)
+                                hora_espana = self._convertir_hora_espana(dt)
+                                
                                 todas_verificaciones.append({
                                     'fecha_hora': fh,
+                                    'hora_cuba': hora_cuba,
+                                    'hora_espana': hora_espana,
                                     'nombre': nombre,
                                     'identificador': ident,
-                                    'estado': e.get('estado'),
-                                    'exitoso': e.get('exitoso')
+                                    'estado': e.get('estado', 'N/A'),
+                                    'exitoso': e.get('exitoso', False)
                                 })
+                                total_verificaciones += 1
+                                if e.get('exitoso'):
+                                    exitosos += 1
+                                else:
+                                    errores += 1
                         except Exception:
                             continue
-                
-                # Ordenar por fecha (más reciente primero)
-                todas_verificaciones.sort(key=lambda x: x['fecha_hora'], reverse=True)
-                
-                for e in todas_verificaciones:
-                    resultado = "<span class='ok'>OK</span>" if e.get('exitoso') else "<span class='err'>ERROR</span>"
-                    estado = e.get('estado', 'N/A')
-                    rows.append(f"<tr><td>{e['fecha_hora']}</td><td>{e['nombre']} ({e['identificador']})</td><td>{estado}</td><td>{resultado}</td></tr>")
-                    estadisticas['total'] += 1
-                    if e.get('exitoso'):
-                        estadisticas['exitosos'] += 1
-                    else:
-                        estadisticas['errores'] += 1
-                        
             else:
-                # leer historial local - TODAS las verificaciones
+                # Obtener desde historial local
                 hist_path = os.path.join("estado_local", "historial.log")
-                todas_verificaciones = []
                 if os.path.exists(hist_path):
                     with open(hist_path, "r", encoding="utf-8") as f:
                         for line in f.readlines():
@@ -522,40 +558,63 @@ class BotVisado:
                                 obj = json.loads(line.strip())
                                 dt = datetime.strptime(obj['fecha_hora'], '%Y-%m-%d %H:%M:%S')
                                 if dt >= cutoff:
-                                    todas_verificaciones.append(obj)
+                                    # Convertir hora a Cuba y España
+                                    hora_cuba = self._convertir_hora_cuba(dt)
+                                    hora_espana = self._convertir_hora_espana(dt)
+                                    
+                                    todas_verificaciones.append({
+                                        'fecha_hora': obj['fecha_hora'],
+                                        'hora_cuba': hora_cuba,
+                                        'hora_espana': hora_espana,
+                                        'nombre': obj.get('nombre', 'Sin nombre'),
+                                        'identificador': obj['identificador'],
+                                        'estado': obj.get('estado', 'N/A'),
+                                        'exitoso': obj.get('exitoso', False)
+                                    })
+                                    total_verificaciones += 1
+                                    if obj.get('exitoso'):
+                                        exitosos += 1
+                                    else:
+                                        errores += 1
                             except Exception:
                                 continue
-                
-                # Ordenar por fecha (más reciente primero)
-                todas_verificaciones.sort(key=lambda x: x['fecha_hora'], reverse=True)
-                
-                for obj in todas_verificaciones:
-                    nombre = obj.get('nombre', 'Sin nombre')
-                    resultado = "<span class='ok'>OK</span>" if obj.get('exitoso') else "<span class='err'>ERROR</span>"
-                    estado = obj.get('estado', 'N/A')
-                    rows.append(f"<tr><td>{obj['fecha_hora']}</td><td>{nombre} ({obj['identificador']})</td><td>{estado}</td><td>{resultado}</td></tr>")
-                    estadisticas['total'] += 1
-                    if obj.get('exitoso'):
-                        estadisticas['exitosos'] += 1
-                    else:
-                        estadisticas['errores'] += 1
+
+            # Ordenar por fecha (más reciente primero)
+            todas_verificaciones.sort(key=lambda x: x['fecha_hora'], reverse=True)
 
             # Calcular tasa de éxito
-            if estadisticas['total'] > 0:
-                estadisticas['tasa_exito'] = round((estadisticas['exitosos'] / estadisticas['total']) * 100, 1)
-            
-            periodo_texto = f"Resumen de verificaciones desde {cutoff.strftime('%Y-%m-%d %H:%M:%S')} hasta {now.strftime('%Y-%m-%d %H:%M:%S')}"
-            
-            # Si no hay actividad, mostrar mensaje
-            if estadisticas['total'] == 0:
-                rows_html = "<tr><td colspan='4' style='color:#9fb3d6;padding:12px;'>No hubo verificaciones en el periodo.</td></tr>"
-            else:
-                rows_html = ''.join(rows)
+            tasa_exito = round((exitosos / total_verificaciones) * 100, 1) if total_verificaciones > 0 else 0
+
+            # Generar filas para la tabla
+            rows = []
+            for verif in todas_verificaciones:
+                resultado = "✅ ÉXITO" if verif['exitoso'] else "❌ ERROR"
+                estado = verif['estado'] if verif['exitoso'] else f"Error: {verif['estado']}"
                 
-            html = self.generar_html_resumen(rows_html, periodo_texto, estadisticas)
-            asunto = f"📊 Resumen de Verificaciones - Últimas {int(self.summary_hours)}h ({estadisticas['total']} verificaciones)"
+                rows.append(f"""
+                <tr>
+                    <td>{verif['hora_cuba']}<br><small style="color:#9fb3d6;">{verif['hora_espana']}</small></td>
+                    <td>{verif['nombre']}<br><small style="color:#9fb3d6;">{verif['identificador']}</small></td>
+                    <td>{estado}</td>
+                    <td style="text-align: center;">{resultado}</td>
+                </tr>
+                """)
+
+            periodo_texto = f"Período: {cutoff.strftime('%Y-%m-%d %H:%M:%S')} a {now.strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            html = self.generar_html_resumen_detallado(
+                ''.join(rows), 
+                periodo_texto, 
+                total_verificaciones, 
+                exitosos, 
+                errores, 
+                tasa_exito,
+                len(self.cuentas)
+            )
+            
+            asunto = f"📊 Resumen Detallado - {total_verificaciones} verificaciones en {int(self.summary_hours)}h"
             self.enviar_notificacion(asunto, html, destinatario=self.config.get('notificaciones', {}).get('email_destino'))
-            self.logger.info(f"Resumen enviado. {estadisticas['total']} verificaciones: {estadisticas['exitosos']} exitosas, {estadisticas['errores']} errores")
+            self.logger.info(f"Resumen detallado enviado. {total_verificaciones} verificaciones: {exitosos} exitosas, {errores} errores")
         except Exception as e:
             self.logger.error(f"Error generando/enviando resumen: {e}")
 
