@@ -3,7 +3,7 @@
 Bot Visado (CRNN integrado) - Monitor 24/7 con notificaciones y resúmenes en español
 - Ejecuta monitoreos periódicos (configurable)
 - Envía correo inmediato al detectar cambio de estado
-- Envía resumen cada 12 horas (HTML)
+- Envía resumen cada 12 horas (HTML) con historial de verificaciones
 - Logs en español
 - Usa PostgreSQL (Railway) si está habilitado en config.yaml
 - Usa Resend (API) para envío de correos (RESEND_API_KEY en ENV)
@@ -33,9 +33,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, StaleElementReferenceException
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-import chromedriver_autoinstaller
 
 # Intentar importar DatabaseManager si existe
 try:
@@ -171,17 +168,14 @@ class BotVisado:
         self.executor = ThreadPoolExecutor(max_workers=self.MAX_CONCURRENCIA)
         self.MAX_REINTENTOS = int(self.config.get('max_reintentos', 12))
         # scheduling params
-        self.interval_hours = float(self.config.get('intervalo_horas', 0.5))  # por defecto 30 minutos
-        self.summary_hours = float(self.config.get('resumen_interval_hours', self.DEFAULT_SUMMARY_HOURS))
+        self.interval_hours = float(self.config.get('monitor_interval_hours', 0.5))  # por defecto 30 minutos
+        self.summary_hours = float(self.config.get('summary_hours', self.DEFAULT_SUMMARY_HOURS))
         self.resend_api_key = os.environ.get('RESEND_API_KEY')
         # Estado interno
         self.running = False
         # Para rastrear primeras verificaciones
         self.primeras_verificaciones = self._cargar_primeras_verificaciones()
-        
-        horas_display = self.formatear_horas_para_display()
-        self.logger.info(f"Bot inicializado: {len(self.cuentas)} cuentas, concurrencia={self.MAX_CONCURRENCIA}")
-        self.logger.info(f"Horario servidor: {horas_display}")
+        self.logger.info(f"Bot inicializado: {len(self.cuentas)} cuentas, concurrencia={self.MAX_CONCURRENCIA}, intervalo={self.interval_hours}h, resumen cada {self.summary_hours}h")
 
     def _cargar_config(self, path):
         if not os.path.exists(path):
@@ -249,134 +243,18 @@ class BotVisado:
         except Exception as e:
             self.logger.warning(f"Error guardando primeras verificaciones: {e}")
 
-    def obtener_horas_actuales(self):
-        """Obtiene la hora actual en Cuba y España"""
-        try:
-            # Timezones
-            import pytz
-            tz_cuba = pytz.timezone('America/Havana')
-            tz_espana = pytz.timezone('Europe/Madrid')
-            
-            # Hora UTC actual
-            utc_now = datetime.utcnow().replace(tzinfo=pytz.utc)
-            
-            # Convertir a ambos timezones
-            hora_cuba = utc_now.astimezone(tz_cuba)
-            hora_espana = utc_now.astimezone(tz_espana)
-            
-            return hora_cuba, hora_espana
-        except Exception as e:
-            # Fallback si pytz no está disponible
-            self.logger.warning(f"Error obteniendo timezones: {e}")
-            now = datetime.now()
-            return now, now
-
-    def formatear_horas_para_display(self):
-        """Formatea las horas para mostrar en logs y emails"""
-        hora_cuba, hora_espana = self.obtener_horas_actuales()
-        
-        cuba_str = hora_cuba.strftime('%Y-%m-%d %H:%M:%S %Z')
-        espana_str = hora_espana.strftime('%Y-%m-%d %H:%M:%S %Z')
-        
-        return f"🇨🇺 Cuba: {cuba_str} | 🇪🇸 España: {espana_str}"
-
-    def procesar_info_tiempo(self, hora_str):
-        """Procesa la información de tiempo para mostrar horas Cuba/España y tiempo transcurrido"""
-        if not hora_str or hora_str == "No disponible" or hora_str == "Nunca":
-            return "No disponible", "No disponible", "-"
-        
-        try:
-            # Convertir string a datetime
-            if isinstance(hora_str, str):
-                hora_utc = datetime.strptime(hora_str, '%Y-%m-%d %H:%M:%S')
-            else:
-                hora_utc = hora_str
-            
-            # Convertir a hora Cuba y España
-            import pytz
-            tz_cuba = pytz.timezone('America/Havana')
-            tz_espana = pytz.timezone('Europe/Madrid')
-            
-            hora_cuba = hora_utc.replace(tzinfo=pytz.utc).astimezone(tz_cuba)
-            hora_espana = hora_utc.replace(tzinfo=pytz.utc).astimezone(tz_espana)
-            
-            # Formatear horas exactas
-            hora_cuba_str = hora_cuba.strftime('%H:%M:%S')
-            hora_espana_str = hora_espana.strftime('%H:%M:%S')
-            
-            # Calcular tiempo transcurrido
-            now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
-            diferencia = now_utc - hora_utc.replace(tzinfo=pytz.utc)
-            
-            minutos = int(diferencia.total_seconds() / 60)
-            horas = int(minutos / 60)
-            
-            if minutos < 1:
-                hace_tiempo = "Ahora"
-            elif minutos < 60:
-                hace_tiempo = f"{minutos}m"
-            elif horas < 24:
-                hace_tiempo = f"{horas}h {minutos%60}m"
-            else:
-                dias = horas // 24
-                hace_tiempo = f"{dias}d {horas%24}h"
-            
-            return f"{hora_cuba_str}", f"{hora_espana_str}", hace_tiempo
-                
-        except Exception as e:
-            self.logger.warning(f"Error procesando tiempo '{hora_str}': {e}")
-            return "Error", "Error", "Error"
-
     # ------------------ Selenium / CAPTCHA ------------------
     def inicializar_selenium(self):
-        """Configura Selenium para Railway"""
-        try:
-            options = webdriver.ChromeOptions()
-            options.add_argument("--headless=new")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--window-size=1920,1080")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--disable-software-rasterizer")
-            
-            # Intentar usar chromedriver-autoinstaller primero
-            try:
-                chromedriver_autoinstaller.install()
-                driver = webdriver.Chrome(options=options)
-            except Exception as e:
-                self.logger.warning(f"Chromedriver autoinstall falló: {e}. Usando webdriver-manager...")
-                service = Service(ChromeDriverManager().install())
-                driver = webdriver.Chrome(service=service, options=options)
-            
-            wait = WebDriverWait(driver, 20)
-            self.logger.info("✅ Selenium inicializado correctamente")
-            return driver, wait
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error crítico inicializando Selenium: {e}")
-            # Fallback: intentar con Browserless (servicio remoto)
-            return self._inicializar_selenium_fallback()
-
-    def _inicializar_selenium_fallback(self):
-        """Fallback usando servicio remoto Browserless"""
-        try:
-            options = webdriver.ChromeOptions()
-            options.add_argument("--headless=new")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            
-            # Usar Browserless.io (servicio gratuito limitado)
-            driver = webdriver.Remote(
-                command_executor='https://chrome.browserless.io/webdriver',
-                options=options
-            )
-            wait = WebDriverWait(driver, 20)
-            self.logger.info("✅ Selenium fallback (Browserless) inicializado")
-            return driver, wait
-        except Exception as e:
-            self.logger.error(f"❌ Fallback también falló: {e}")
-            raise
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        # Railway requiere chrome + chromedriver build; asumimos disponible
+        driver = webdriver.Chrome(options=options)
+        wait = WebDriverWait(driver, 20)
+        return driver, wait
 
     def capturar_captcha(self, driver, wait, identificador=None):
         try:
@@ -416,6 +294,7 @@ class BotVisado:
                     self.logger.info(f"CRNN: pred='{pred}' len={len(pred)} conf={conf:.3f} -> fallback a Tesseract")
             except Exception as e:
                 self.logger.error(f"Error CRNN: {e}")
+
         # Fallback Tesseract
         try:
             import pytesseract
@@ -430,6 +309,7 @@ class BotVisado:
                 return cleaned, 'tesseract', 0.0
         except Exception as e:
             self.logger.warning(f"Tesseract falló: {e}")
+
         return "", 'none', 0.0
 
     # ------------------ DB helpers (con fallback local) ------------------
@@ -483,9 +363,6 @@ class BotVisado:
 
     # ------------------ Notificaciones (Resend) ------------------
     def enviar_notificacion(self, asunto, cuerpo_html, destinatario=None, es_html=True):
-        # Pequeño delay para evitar rate limiting
-        time.sleep(0.5)
-        
         # destinatario: si None, usar config.notifications.email_destino
         email_dest = destinatario or self.config.get('notificaciones', {}).get('email_destino')
         if not email_dest:
@@ -526,8 +403,6 @@ class BotVisado:
     def enviar_notificacion_primer_monitoreo(self, nombre, identificador, estado):
         """Envía notificación cuando se monitorea una cuenta por primera vez"""
         asunto = f"✅ Monitoreo iniciado: {nombre} ({identificador})"
-        horas_display = self.formatear_horas_para_display()
-        
         cuerpo = f"""
         <h3>¡Monitoreo iniciado exitosamente!</h3>
         <p>Se ha comenzado a monitorear el trámite de visado para:</p>
@@ -536,174 +411,151 @@ class BotVisado:
             <li><strong>Identificador:</strong> {identificador}</li>
             <li><strong>Estado inicial:</strong> {estado}</li>
         </ul>
-        <p><strong>Horario de verificación:</strong><br>{horas_display.replace(' | ', '<br>')}</p>
         <p>El bot verificará periódicamente el estado y te notificará de cualquier cambio.</p>
+        <p><em>Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}</em></p>
         """
         return self.enviar_notificacion(asunto, cuerpo)
 
-    # ------------------ Resumen HTML (ACTUALIZADO) ------------------
+    # ------------------ Resumen HTML ------------------
     def generar_html_resumen(self, rows_html, periodo_texto, estadisticas):
         css = """
         body { font-family: Arial, sans-serif; background:#0b1220; color:#f0f6ff; padding:18px; }
         .card { background:#071022; border-radius:10px; padding:14px; box-shadow:0 6px 18px rgba(0,0,0,0.6); }
         table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
         th, td { padding:8px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.06); }
-        th { color:#9fb3d6; background:rgba(255,255,255,0.05); font-size:11px; }
-        .ok { color:#a7f3d0; font-weight:600; }
-        .err { color:#fecaca; font-weight:600; }
-        .stats { background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px; margin: 16px 0; }
-        .stat-item { display: inline-block; margin-right: 25px; }
-        .stat-value { font-size: 20px; font-weight: bold; }
-        .time-info { background: rgba(255,255,255,0.03); padding: 12px; border-radius: 6px; margin: 10px 0; font-size: 13px; color: #9fb3d6; }
+        th { color:#9fb3d6; background: rgba(255,255,255,0.05); }
+        .ok { color:#a7f3d0; font-weight:600 }
+        .err { color:#fecaca; font-weight:600 }
+        .stats { background: rgba(255,255,255,0.05); padding: 12px; border-radius: 6px; margin: 12px 0; }
+        .stat-item { display: inline-block; margin-right: 20px; }
+        .stat-value { font-size: 18px; font-weight: bold; }
+        .periodo { color: #9fb3d6; font-size: 13px; margin-bottom: 10px; }
         """
-        
-        # Obtener horas actuales
-        horas_display = self.formatear_horas_para_display()
         
         stats_html = f"""
         <div class="stats">
             <div class="stat-item">
-                <div style="color:#9fb3d6; font-size:14px;">Cuentas activas</div>
-                <div class="stat-value" style="color:#a7f3d0;">{estadisticas['total']}</div>
+                <div>Total verificaciones</div>
+                <div class="stat-value" style="color:#93c5fd;">{estadisticas['total']}</div>
             </div>
             <div class="stat-item">
-                <div style="color:#9fb3d6; font-size:14px;">Verificadas exitosamente</div>
+                <div>Exitosas</div>
                 <div class="stat-value" style="color:#a7f3d0;">{estadisticas['exitosos']}</div>
             </div>
             <div class="stat-item">
-                <div style="color:#9fb3d6; font-size:14px;">Con errores</div>
+                <div>Con errores</div>
                 <div class="stat-value" style="color:#fecaca;">{estadisticas['errores']}</div>
             </div>
             <div class="stat-item">
-                <div style="color:#9fb3d6; font-size:14px;">Tasa de éxito</div>
-                <div class="stat-value" style="color:#93c5fd;">{estadisticas['tasa_exito']}%</div>
+                <div>Tasa de éxito</div>
+                <div class="stat-value" style="color:#fbbf24;">{estadisticas['tasa_exito']}%</div>
             </div>
         </div>
         """
         
         html = f"""<html><head><meta charset="utf-8"><style>{css}</style></head><body>
         <div class="card">
-          <h2>📊 Estado Actual del Monitoreo</h2>
-          <div style="color:#9fb3d6; font-size:14px; margin-bottom:10px;">{periodo_texto}</div>
-          <div class="time-info">
-            <strong>🕐 Horario del reporte:</strong><br>
-            {horas_display.replace(' | ', '<br>')}
-          </div>
-          {stats_html}
+          <h2>📊 Historial de Verificaciones</h2>
+          <div class="periodo">{periodo_texto}</div>
+          {stats_html if estadisticas['total'] > 0 else ''}
           <table role="presentation">
-            <thead>
-              <tr>
-                <th>Nombre</th>
-                <th>Identificador</th>
-                <th>Estado Actual</th>
-                <th>Hora Verificación</th>
-                <th>Hace</th>
-                <th>Resultado</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Fecha/Hora</th><th>Cuenta</th><th>Estado Obtenido</th><th>Resultado</th></tr></thead>
             <tbody>{rows_html}</tbody>
           </table>
-          <div style="margin-top:16px; font-size:11px; color:#93b0d6;">
-            Enviado por Bot Visado • {horas_display}
+          <div style="margin-top:12px; font-size:11px; color:#93b0d6;">
+            Enviado por Bot Visado • {time.strftime('%Y-%m-%d %H:%M:%S')}
           </div>
         </div></body></html>"""
         return html
 
     def enviar_resumen_12h(self):
-        """Envía resumen con el estado actual de cada cuenta, hora exacta y tiempo transcurrido"""
+        # Construir resumen desde DB o logs locales - MOSTRAR TODAS LAS VERIFICACIONES
         try:
             now = datetime.now()
+            cutoff = now - timedelta(hours=self.summary_hours)
             rows = []
             estadisticas = {"exitosos": 0, "errores": 0, "total": 0, "tasa_exito": 0}
             
-            # Obtener el estado actual de cada cuenta
-            for cuenta in self.cuentas:
-                nombre = cuenta.get('nombre', 'Sin nombre')
-                identificador = cuenta.get('identificador')
+            if self.db:
+                # cargar TODAS las verificaciones del periodo para todas las cuentas
+                todas_verificaciones = []
+                for c in self.cuentas:
+                    ident = c.get('identificador')
+                    nombre = c.get('nombre', 'Sin nombre')
+                    hist = self.db.cargar_historial(ident, limite=1000)
+                    for e in hist:
+                        try:
+                            fh = e.get('fecha_hora')
+                            dt = datetime.strptime(fh, '%Y-%m-%d %H:%M:%S')
+                            if dt >= cutoff:
+                                todas_verificaciones.append({
+                                    'fecha_hora': fh,
+                                    'nombre': nombre,
+                                    'identificador': ident,
+                                    'estado': e.get('estado'),
+                                    'exitoso': e.get('exitoso')
+                                })
+                        except Exception:
+                            continue
                 
-                # Buscar la última verificación en el historial
-                ultimo_estado = None
-                ultima_hora_str = "No disponible"
-                exitoso = False
+                # Ordenar por fecha (más reciente primero)
+                todas_verificaciones.sort(key=lambda x: x['fecha_hora'], reverse=True)
                 
-                if self.db:
-                    # Buscar en la base de datos
-                    historial = self.db.cargar_historial(identificador, limite=1)
-                    if historial:
-                        ultimo_registro = historial[0]
-                        ultimo_estado = ultimo_registro.get('estado')
-                        ultima_hora_str = ultimo_registro.get('fecha_hora', 'No disponible')
-                        exitoso = ultimo_registro.get('exitoso', False)
-                else:
-                    # Buscar en archivo local
-                    hist_path = os.path.join("estado_local", "historial.log")
-                    if os.path.exists(hist_path):
-                        with open(hist_path, "r", encoding="utf-8") as f:
-                            lineas = f.readlines()
-                            # Buscar la última entrada para esta cuenta
-                            for linea in reversed(lineas):
-                                try:
-                                    obj = json.loads(linea.strip())
-                                    if obj.get('identificador') == identificador:
-                                        ultimo_estado = obj.get('estado')
-                                        ultima_hora_str = obj.get('fecha_hora', 'No disponible')
-                                        exitoso = obj.get('exitoso', False)
-                                        break
-                                except Exception:
-                                    continue
-                
-                # Determinar resultado y estilo
-                if ultimo_estado:
-                    if exitoso:
-                        resultado = "<span class='ok'>✅ ÉXITO</span>"
-                        estado_display = ultimo_estado
+                for e in todas_verificaciones:
+                    resultado = "<span class='ok'>OK</span>" if e.get('exitoso') else "<span class='err'>ERROR</span>"
+                    estado = e.get('estado', 'N/A')
+                    rows.append(f"<tr><td>{e['fecha_hora']}</td><td>{e['nombre']} ({e['identificador']})</td><td>{estado}</td><td>{resultado}</td></tr>")
+                    estadisticas['total'] += 1
+                    if e.get('exitoso'):
                         estadisticas['exitosos'] += 1
                     else:
-                        resultado = "<span class='err'>❌ ERROR</span>"
-                        estado_display = "Error en verificación"
                         estadisticas['errores'] += 1
-                    
-                    estadisticas['total'] += 1
-                else:
-                    resultado = "<span class='err'>❌ SIN DATOS</span>"
-                    estado_display = "No se pudo verificar"
-                    ultima_hora_str = "Nunca"
-                    estadisticas['errores'] += 1
-                    estadisticas['total'] += 1
+                        
+            else:
+                # leer historial local - TODAS las verificaciones
+                hist_path = os.path.join("estado_local", "historial.log")
+                todas_verificaciones = []
+                if os.path.exists(hist_path):
+                    with open(hist_path, "r", encoding="utf-8") as f:
+                        for line in f.readlines():
+                            try:
+                                obj = json.loads(line.strip())
+                                dt = datetime.strptime(obj['fecha_hora'], '%Y-%m-%d %H:%M:%S')
+                                if dt >= cutoff:
+                                    todas_verificaciones.append(obj)
+                            except Exception:
+                                continue
                 
-                # Procesar información de tiempo
-                hora_cuba, hora_espana, hace_tiempo = self.procesar_info_tiempo(ultima_hora_str)
+                # Ordenar por fecha (más reciente primero)
+                todas_verificaciones.sort(key=lambda x: x['fecha_hora'], reverse=True)
                 
-                # Agregar fila a la tabla
-                rows.append(f"""
-                <tr>
-                    <td>{nombre}</td>
-                    <td>{identificador}</td>
-                    <td>{estado_display}</td>
-                    <td style="color:#9fb3d6; font-size:11px;">
-                        🇨🇺 {hora_cuba}<br>
-                        🇪🇸 {hora_espana}
-                    </td>
-                    <td style="color:#93c5fd; font-size:12px; font-weight:600;">{hace_tiempo}</td>
-                    <td>{resultado}</td>
-                </tr>
-                """)
-            
+                for obj in todas_verificaciones:
+                    nombre = obj.get('nombre', 'Sin nombre')
+                    resultado = "<span class='ok'>OK</span>" if obj.get('exitoso') else "<span class='err'>ERROR</span>"
+                    estado = obj.get('estado', 'N/A')
+                    rows.append(f"<tr><td>{obj['fecha_hora']}</td><td>{nombre} ({obj['identificador']})</td><td>{estado}</td><td>{resultado}</td></tr>")
+                    estadisticas['total'] += 1
+                    if obj.get('exitoso'):
+                        estadisticas['exitosos'] += 1
+                    else:
+                        estadisticas['errores'] += 1
+
             # Calcular tasa de éxito
             if estadisticas['total'] > 0:
                 estadisticas['tasa_exito'] = round((estadisticas['exitosos'] / estadisticas['total']) * 100, 1)
             
-            periodo_texto = f"Estado actual de las cuentas - {now.strftime('%Y-%m-%d %H:%M:%S')}"
-            html = self.generar_html_resumen(
-                ''.join(rows) or "<tr><td colspan='6' style='color:#9fb3d6;padding:12px;'>No hay datos disponibles.</td></tr>", 
-                periodo_texto, 
-                estadisticas
-            )
+            periodo_texto = f"Resumen de verificaciones desde {cutoff.strftime('%Y-%m-%d %H:%M:%S')} hasta {now.strftime('%Y-%m-%d %H:%M:%S')}"
             
-            asunto = f"📊 Estado Actual - {estadisticas['exitosos']}/{estadisticas['total']} Exitosos ({estadisticas['tasa_exito']}%)"
+            # Si no hay actividad, mostrar mensaje
+            if estadisticas['total'] == 0:
+                rows_html = "<tr><td colspan='4' style='color:#9fb3d6;padding:12px;'>No hubo verificaciones en el periodo.</td></tr>"
+            else:
+                rows_html = ''.join(rows)
+                
+            html = self.generar_html_resumen(rows_html, periodo_texto, estadisticas)
+            asunto = f"📊 Resumen de Verificaciones - Últimas {int(self.summary_hours)}h ({estadisticas['total']} verificaciones)"
             self.enviar_notificacion(asunto, html, destinatario=self.config.get('notificaciones', {}).get('email_destino'))
-            self.logger.info(f"Resumen enviado. Estado actual: {estadisticas['exitosos']} exitosos, {estadisticas['errores']} errores")
-            
+            self.logger.info(f"Resumen enviado. {estadisticas['total']} verificaciones: {estadisticas['exitosos']} exitosas, {estadisticas['errores']} errores")
         except Exception as e:
             self.logger.error(f"Error generando/enviando resumen: {e}")
 
@@ -817,9 +669,8 @@ class BotVisado:
                 guardado = self.guardar_estado(nombre, identificador, estado_actual)
                 # registrar verificación en DB/historial ya hecho en guardar_estado
                 asunto = f"🚨 Cambio de estado detectado: {nombre} ({identificador})"
-                horas_display = self.formatear_horas_para_display()
-                cuerpo = f"Se detectó un cambio en el trámite para {nombre} ({identificador}).\n\nEstado anterior: {estado_anterior}\nEstado actual: {estado_actual}\n\n🕐 Horario de detección:\n{horas_display}"
-                self.enviar_notificacion(asunto, f"<pre>{cuerpo}</pre>", destinatario=None, es_html=True)
+                cuerpo = f"Se detectó un cambio en el trámite para {nombre} ({identificador}).\n\nEstado anterior: {estado_anterior}\nEstado actual: {estado_actual}\n\nTimestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                self.enviar_notificacion(asunto, f"<pre>{cuerpo}</pre>", destinatario=cuenta.get('email_notif') or None, es_html=True)
                 self.logger.info(f"[{nombre} ({identificador})] Cambio detectado y notificado.")
             else:
                 # si no hubo cambio igual registramos verificación (si DB lo requiere)
@@ -879,5 +730,3 @@ class BotVisado:
 if __name__ == "__main__":
     bot = BotVisado("config.yaml")
     bot.iniciar()
-
-
